@@ -1,0 +1,8 @@
+Flask
+authlib
+python-dotenv
+gradio
+requests
+Pillow
+httpx
+httpcore
