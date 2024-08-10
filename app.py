@@ -36,6 +36,8 @@ google = oauth.register(
 
 ALLOWED_USERS = os.getenv("ALLOWED_USERS").split(",")
 
+print(ALLOWED_USERS,os.getenv("GOOGLE_CLIENT_ID"))
+
 @app.route('/')
 def homepage():
     user = dict(session).get('user', None)
