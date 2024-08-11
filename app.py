@@ -8,6 +8,7 @@ from PIL import Image
 import base64
 import io
 import requests
+import secrets
 
 # Load environment variables
 load_dotenv()
@@ -34,9 +35,11 @@ google = oauth.register(
     }
 )
 
-ALLOWED_USERS = os.getenv("ALLOWED_USERS").split(",")
+ALLOWED_USERS = os.getenv("ALLOWED_USERS", "").split(",")
 
-print(ALLOWED_USERS,os.getenv("GOOGLE_CLIENT_ID"))
+# Nonce generator for extra security
+def generate_nonce():
+    return secrets.token_urlsafe(16)
 
 @app.route('/')
 def homepage():
@@ -46,13 +49,27 @@ def homepage():
 @app.route('/login')
 def login():
     redirect_uri = url_for('auth', _external=True)
-    return google.authorize_redirect(redirect_uri)
+    session['nonce'] = generate_nonce()
+    return google.authorize_redirect(redirect_uri, nonce=session['nonce'])
 
 @app.route('/auth')
 def auth():
-    token = google.authorize_access_token()
-    user_info = google.parse_id_token(token)
+    try:
+        token = google.authorize_access_token()
+    except Exception as e:
+        print(f"Error during token authorization: {e}")
+        return "Error during OAuth process", 500
+
+    try:
+        user_info = google.parse_id_token(token, nonce=session.get('nonce'))
+    except Exception as e:
+        print(f"Error parsing user info: {e}")
+        return "Error parsing user info", 500
     
+    if 'email' not in user_info:
+        print("User info does not contain 'email'")
+        return "Error: User info does not contain 'email'", 500
+
     if user_info['email'] not in ALLOWED_USERS:
         return "Access Denied", 403
     
@@ -100,7 +117,6 @@ def sepia(image):
     return image
 
 def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_image):
-    print(slider_value)
     payload = {
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -123,8 +139,6 @@ def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_i
         except Exception as e:
             print(e)
             img_base64_control_net = None
-        finally:
-            print("Control Net Image processed")
 
         args_control_net = [
             {
@@ -146,8 +160,6 @@ def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_i
         except Exception as e:
             print(e)
             img_base64_reactor = None
-        finally:
-            print("Face Swap Image processed")
 
         args_reactor = [
             img_base64_reactor, #0
@@ -173,8 +185,8 @@ def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_i
             "CUDA", #20 CPU or CUDA (if you have it), CPU - by default
             True, #21 Face Mask Correction
             0, #22 Select Source, 0 - Image, 1 - Face Model, 2 - Source Folder
-            "elena.safetensors", #23 Filename of the face model (from "models/reactor/faces"), e.g. elena.safetensors, don't forget to set #22 to 1
-            "", #24 The path to the folder containing source faces images, don't forget to set #22 to 2 C:\PATH_TO_FACES_IMAGES
+            "elena.safetensors", #23 Filename of the face model (from "models/reactor/faces"), e.g. elena.safetensors
+            "", #24 The path to the folder containing source faces images
             None, #25 skip it for API
             True, #26 Randomly select an image from the path
             True, #27 Force Upscale even if no face found
@@ -184,15 +196,11 @@ def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_i
 
         payload["alwayson_scripts"] = {"reactor": {"args": args_reactor}}
 
-    print("Generated Payload:", payload)
-
-    # Send the payload to the specified URL
-    response = requests.post(sdapi_url+"/sdapi/v1/txt2img", json=payload)
+    response = requests.post(sdapi_url + "/sdapi/v1/txt2img", json=payload)
     if response.status_code == 200:
         response_json = response.json()
-        # Fetch all images and store them in an array
         image_base64_list = response_json.get("images", [])
-        
+
         generated_images = []
         for image_base64 in image_base64_list:
             try:
@@ -217,18 +225,27 @@ def create_gradio_interface():
         inputs=[
             gr.Textbox(lines=1, placeholder="Prompt Text Here...", label="Prompt"),
             gr.Textbox(lines=1, placeholder="Negative Prompt Text Here...", label="Negative Prompt"),
-            gr.Slider(1, 5, step=1, label="Select no. of Generations", value=1),
-            gr.Image(type="numpy", label="Pose Image"),
-            gr.Image(type="numpy", label="Face Swap Image")
+            gr.Slider(1, 10, value=1, step=1, label="Number of Generations"),
+            gr.Image(type="numpy", label="Pose Image (Optional)"),
+            gr.Image(type="numpy", label="Face Swap Image (Optional)")
         ],
-        outputs=[gr.Gallery(label="Generated Images"), gr.Textbox(label="Details")]
+        outputs=[
+            gr.Gallery(label="Generated Images"),
+            gr.Textbox(label="Debug Info")
+        ],
+        live=False,
+        title="AI Image Generator"
     )
     return interface
 
-@app.route('/gradio', methods=["GET"])
-def gradio_app():
-    threading.Thread(target=create_gradio_interface().launch, kwargs={"server_name": "0.0.0.0", "server_port": 7860}).start()
-    return "Gradio app is running!"
+@app.route('/gradio')
+def launch_gradio():
+    def run_gradio():
+        interface = create_gradio_interface()
+        interface.launch(server_name="0.0.0.0", server_port=7860)
+
+    threading.Thread(target=run_gradio).start()
+    return redirect("http://127.0.0.1:7860/")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
