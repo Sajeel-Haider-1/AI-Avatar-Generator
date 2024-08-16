@@ -7,3 +7,4 @@ Pillow
 httpx
 httpcore
 gunicorn
+flask_cors

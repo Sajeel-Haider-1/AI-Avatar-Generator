@@ -1,23 +1,23 @@
-from flask import Flask, redirect, url_for, session, jsonify, request
+from flask import Flask, render_template_string, redirect, url_for, session
+from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 import os
 import gradio as gr
 import threading
-from PIL import Image
 import base64
 import io
 import requests
+from PIL import Image
 import secrets
 
-# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "supersecretkey")
 sdapi_url = os.getenv("SDAPI_URL")
 
-# Configuration for Google OAuth2
 app.config['GOOGLE_CLIENT_ID'] = os.getenv("GOOGLE_CLIENT_ID")
 app.config['GOOGLE_CLIENT_SECRET'] = os.getenv("GOOGLE_CLIENT_SECRET")
 app.config['GOOGLE_DISCOVERY_URL'] = (
@@ -37,14 +37,13 @@ google = oauth.register(
 
 ALLOWED_USERS = os.getenv("ALLOWED_USERS", "").split(",")
 
-# Nonce generator for extra security
 def generate_nonce():
     return secrets.token_urlsafe(16)
 
 @app.route('/')
 def homepage():
     user = dict(session).get('user', None)
-    return jsonify(user) if user else redirect(url_for('login'))
+    return redirect(url_for('gradio_interface')) if user else redirect(url_for('login'))
 
 @app.route('/login')
 def login():
@@ -56,65 +55,40 @@ def login():
 def auth():
     try:
         token = google.authorize_access_token()
-    except Exception as e:
-        print(f"Error during token authorization: {e}")
-        return "Error during OAuth process", 500
-
-    try:
         user_info = google.parse_id_token(token, nonce=session.get('nonce'))
     except Exception as e:
-        print(f"Error parsing user info: {e}")
-        return "Error parsing user info", 500
-    
-    if 'email' not in user_info:
-        print("User info does not contain 'email'")
-        return "Error: User info does not contain 'email'", 500
+        print(f"Error: {e}")
+        return "Error during OAuth process", 500
 
-    if user_info['email'] not in ALLOWED_USERS:
+    if 'email' not in user_info or user_info['email'] not in ALLOWED_USERS:
         return "Access Denied", 403
-    
+
     session['user'] = user_info
-    return redirect('/gradio')
+    return redirect(url_for('gradio_interface'))
 
 @app.route('/logout')
 def logout():
     session.pop('user', None)
     return redirect('/')
 
-def get_user_info():
-    user = dict(session).get('user', None)
-    return f"Hello, {user['name']}" if user else "Please log in"
-
-def image_to_base64(image):
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    return img_str
-
-def sepia(image):
-    width, height = image.size
-    pixels = image.load()  # create the pixel map
-
-    for py in range(height):
-        for px in range(width):
-            r, g, b = image.getpixel((px, py))
-
-            tr = int(0.393 * r + 0.769 * g + 0.189 * b)
-            tg = int(0.349 * r + 0.686 * g + 0.168 * b)
-            tb = int(0.272 * r + 0.534 * g + 0.131 * b)
-
-            if tr > 255:
-                tr = 255
-
-            if tg > 255:
-                tg = 255
-
-            if tb > 255:
-                tb = 255
-
-            pixels[px, py] = (tr, tg, tb)
-
-    return image
+def create_gradio_interface():
+    interface = gr.Interface(
+        fn=output_window,
+        inputs=[
+            gr.Textbox(lines=1, placeholder="Prompt Text Here...", label="Prompt"),
+            gr.Textbox(lines=1, placeholder="Negative Prompt Text Here...", label="Negative Prompt"),
+            gr.Slider(1, 10, value=1, step=1, label="Number of Generations"),
+            gr.Image(type="numpy", label="Pose Image (Optional)"),
+            gr.Image(type="numpy", label="Face Swap Image (Optional)")
+        ],
+        outputs=[
+            gr.Gallery(label="Generated Images"),
+            gr.Textbox(label="Debug Info")
+        ],
+        live=False,
+        title="AI Image Generator"
+    )
+    return interface
 
 def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_image):
     payload = {
@@ -199,53 +173,24 @@ def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_i
     response = requests.post(sdapi_url + "/sdapi/v1/txt2img", json=payload)
     if response.status_code == 200:
         response_json = response.json()
-        image_base64_list = response_json.get("images", [])
-
-        generated_images = []
-        for image_base64 in image_base64_list:
-            try:
-                if not image_base64.startswith("data:image/png;base64,"):
-                    image_base64 = "data:image/png;base64," + image_base64
-                image_data = base64.b64decode(image_base64.split(",")[1])
-                image = Image.open(io.BytesIO(image_data))
-                generated_images.append(image)
-            except Exception as e:
-                print("Error decoding image:", e)
+        image_base64 = response_json['images'][0]
+        return image_base64
     else:
-        generated_images = []
-        print("Error:", response.text)
+        print("Request failed with status code:", response.status_code)
+        return None
 
-    processed_images = [sepia(pose_image)] if isinstance(pose_image, Image.Image) else []
-
-    return generated_images if generated_images else processed_images, f"Generated Payload: {payload}"
-
-def create_gradio_interface():
-    interface = gr.Interface(
-        fn=output_window,
-        inputs=[
-            gr.Textbox(lines=1, placeholder="Prompt Text Here...", label="Prompt"),
-            gr.Textbox(lines=1, placeholder="Negative Prompt Text Here...", label="Negative Prompt"),
-            gr.Slider(1, 10, value=1, step=1, label="Number of Generations"),
-            gr.Image(type="numpy", label="Pose Image (Optional)"),
-            gr.Image(type="numpy", label="Face Swap Image (Optional)")
-        ],
-        outputs=[
-            gr.Gallery(label="Generated Images"),
-            gr.Textbox(label="Debug Info")
-        ],
-        live=False,
-        title="AI Image Generator"
-    )
-    return interface
+def launch_gradio_interface():
+    interface = create_gradio_interface()
+    interface.launch(server_name="0.0.0.0", server_port=7860, share=True, inbrowser=False, show_error=True, prevent_thread_lock=True)
 
 @app.route('/gradio')
-def launch_gradio():
-    def run_gradio():
-        interface = create_gradio_interface()
-        interface.launch(server_name="0.0.0.0", server_port=7860)
-
-    threading.Thread(target=run_gradio).start()
-    return redirect("http://127.0.0.1:7860/")
+def gradio_interface():
+    user = dict(session).get('user', None)
+    if user:
+        return render_template_string('<iframe src="http://127.0.0.1:7860" width="100%" height="100%"></iframe>')
+    return redirect(url_for('login'))
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    gradio_thread = threading.Thread(target=launch_gradio_interface)
+    gradio_thread.start()
+    app.run(host='0.0.0.0', port=8080, debug=False)
