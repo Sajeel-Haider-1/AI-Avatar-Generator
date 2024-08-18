@@ -49,6 +49,7 @@ def homepage():
 @app.route('/login')
 def login():
     redirect_uri = url_for('auth', _external=True)
+    print(redirect_uri)
     session['nonce'] = generate_nonce()
     print(session['nonce'])
     return google.authorize_redirect(redirect_uri, nonce=session['nonce'])
