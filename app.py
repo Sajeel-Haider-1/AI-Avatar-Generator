@@ -43,12 +43,14 @@ def generate_nonce():
 @app.route('/')
 def homepage():
     user = dict(session).get('user', None)
+    print("Initial User",user)
     return redirect(url_for('gradio_interface')) if user else redirect(url_for('login'))
 
 @app.route('/login')
 def login():
     redirect_uri = url_for('auth', _external=True)
     session['nonce'] = generate_nonce()
+    print(session['nonce'])
     return google.authorize_redirect(redirect_uri, nonce=session['nonce'])
 
 @app.route('/auth')
@@ -181,8 +183,15 @@ def output_window(prompt, negative_prompt, slider_value, pose_image, face_swap_i
 
 def launch_gradio_interface():
     interface = create_gradio_interface()
-    interface.launch(server_name="0.0.0.0", server_port=7860, share=True, inbrowser=False, show_error=True, prevent_thread_lock=True)
-
+    interface.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=True,
+        inbrowser=False,
+        show_error=True,
+        prevent_thread_lock=True,
+        max_threads=1  # Optional: limit number of threads
+    )
 @app.route('/gradio')
 def gradio_interface():
     user = dict(session).get('user', None)
