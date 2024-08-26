@@ -91,7 +91,7 @@ async def gradio_interface(request: Request):
     print("User info",user_info['email'])
     set_user_email(user_info['email'])
     launch_gradio_interface()
-    gradio_url = "http://localhost:7860/"
+    gradio_url = "http://127.0.0.1:7860/"
     html_content = f"""
     <!DOCTYPE html>
     <html>
