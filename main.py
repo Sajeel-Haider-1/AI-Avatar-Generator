@@ -1,25 +1,74 @@
-
-from fastapi import FastAPI
+import uvicorn
+import httpx
+import os
+from fastapi import FastAPI, HTTPException, status, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from auth import get_current_user, set_user_email
+from gradio_utils import create_gradio_interface
 import gradio as gr
-import os 
 
 app = FastAPI()
 
-# Define your Gradio interface
-def greet(name):
-    return f"Hello {name}!"
+RUNPOD_RUN_URL = os.getenv("RUNPOD_RUN_URL")
+RUNPOD_TOKEN = os.getenv("RUNPOD_API_KEY")
+RUNPOD_STATUS_URL = os.getenv("RUNPOD_STATUS_URL")
+REDIRECT_URI = os.getenv("REDIRECT_URI")
+CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
-gr_interface = gr.Interface(fn=greet, inputs="text", outputs="text")
+gr_interface = create_gradio_interface()
 
-# Mount Gradio app at a specific path
 gr.mount_gradio_app(app, gr_interface, path="/gradio")
 
-# Define a FastAPI route
-@app.get("/")
-def read_main():
-    return {"message": "Welcome to the FastAPI app!"}
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    token = request.query_params.get("access_token")
+    print(f"Token in home: {token}")
+    if token:
+        try:
+            await get_current_user(token)
+            return RedirectResponse(url=f"/gradio?access_token={token}")
+        except HTTPException:
+            return RedirectResponse(url="/login")
+    else:
+        return RedirectResponse(url="/login")
 
-# Run the application
+@app.get("/login")
+async def login():
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/auth"
+        f"?client_id={CLIENT_ID}"
+        f"&response_type=code"
+        f"&redirect_uri={REDIRECT_URI}"
+        f"&scope=openid%20email%20profile"
+        f"&access_type=offline"
+    )
+    return RedirectResponse(auth_url)
+
+@app.get("/callback")
+async def callback(request: Request):
+    code = request.query_params.get("code")
+    if not code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Authorization code not found",
+        )
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "redirect_uri": REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+        )
+        token_response.raise_for_status()
+        tokens = token_response.json()
+        access_token = tokens["access_token"]
+    
+    return RedirectResponse(url=f"/?access_token={access_token}")
+
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

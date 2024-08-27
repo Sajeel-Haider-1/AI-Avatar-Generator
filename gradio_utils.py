@@ -108,7 +108,7 @@ def poll_job_status(status_id, headers):
                 print(job_status)
                 update_job_status(job_status["status"])
                 
-                if job_status["status"] in ['COMPLETED', 'FAILED']:
+                if job_status["status"] in ['COMPLETED', 'FAILED', 'CANCELLED']:
                     polling_active = False
 
                 update_job_status_in_firestore(status_id, job_status["status"])
