@@ -1,0 +1,14 @@
+{
+    "name": "pulumi-gcp",
+    "main": "index.ts",
+    "devDependencies": {
+        "@types/node": "^18",
+        "typescript": "^5.0.0"
+    },
+    "dependencies": {
+        "@pulumi/docker": "^4.5.5",
+        "@pulumi/gcp": "^7.0.0",
+        "@pulumi/pulumi": "^3.113.0",
+        "dotenv": "^16.4.5"
+    }
+}
