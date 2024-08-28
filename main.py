@@ -2,8 +2,8 @@ import uvicorn
 import httpx
 import os
 from fastapi import FastAPI, HTTPException, status, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-from auth import get_current_user, set_user_email
+from fastapi.responses import HTMLResponse, RedirectResponse,JSONResponse
+from auth import get_current_user
 from gradio_utils import create_gradio_interface
 import gradio as gr
 
@@ -29,7 +29,9 @@ async def home(request: Request):
             await get_current_user(token)
             return RedirectResponse(url=f"/gradio?access_token={token}")
         except HTTPException:
-            return RedirectResponse(url="/login")
+            return JSONResponse(
+                content={"detail": "Invalid request. Account not allowed, try with a different email."},
+            )
     else:
         return RedirectResponse(url="/login")
 
@@ -47,28 +49,34 @@ async def login():
 
 @app.get("/callback")
 async def callback(request: Request):
-    code = request.query_params.get("code")
-    if not code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Authorization code not found",
+    try:
+        code = request.query_params.get("code")
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Authorization code not found",
+            )
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                    "redirect_uri": REDIRECT_URI,
+                    "grant_type": "authorization_code",
+                },
+            )
+            token_response.raise_for_status()
+            tokens = token_response.json()
+            access_token = tokens["access_token"]
+            print("Print Access",access_token)
+            return RedirectResponse(url=f"/?access_token={access_token}")
+    except Exception as e:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "An unexpected error occurred. Please try again."},
         )
-    async with httpx.AsyncClient() as client:
-        token_response = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "redirect_uri": REDIRECT_URI,
-                "grant_type": "authorization_code",
-            },
-        )
-        token_response.raise_for_status()
-        tokens = token_response.json()
-        access_token = tokens["access_token"]
     
-    return RedirectResponse(url=f"/?access_token={access_token}")
-
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

@@ -35,6 +35,6 @@ def poll_job_status(status_id, headers):
                 print(f"Failed to fetch job status: {response_image.status_code}")
         except Exception as e:
             print(f"Error polling job status: {e}")
-        time.sleep(5)  # Poll every 5 seconds
+        time.sleep(5)  
 
     return response_image
